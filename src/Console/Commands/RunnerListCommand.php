@@ -32,6 +32,7 @@ class RunnerListCommand extends Command
     public function handle(): int
     {
         $paths = RunnerPool::getPaths();
+
         
         if (empty($paths)) {
             $this->error('No runner paths configured.');
@@ -74,18 +75,20 @@ class RunnerListCommand extends Command
     {
         $runners = [];
 
+
         foreach ($paths as $path) {
             if (!is_dir($path)) {
                 continue;
             }
 
-            $files = glob($path . '/*.php');
+            $files = glob($path . DIRECTORY_SEPARATOR . '*.php');
             if ($files === false) {
                 continue;
             }
 
             foreach ($files as $file) {
                 try {
+
                     $runner = $this->loadRunner($file);
                     
                     if (!$this->isValidRunner($runner)) {
@@ -162,7 +165,7 @@ class RunnerListCommand extends Command
      */
     private function displayRunnersTable(array $runners): void
     {
-        $headers = ['File', 'Name', 'Pool', 'Tag', 'Type', 'Priority', 'Status', 'Schedule', 'Description'];
+        $headers = ['File', 'Name', 'Pool', 'Tag', 'Type', 'Priority', 'Status', 'Schedule', 'Depends On', 'Description'];
 
         $rows = [];
 
@@ -183,6 +186,20 @@ class RunnerListCommand extends Command
                 $schedule = $runner->getSchedule() ?? '-';
             } elseif (property_exists($runner, 'schedule')) {
                 $schedule = $runner->schedule ?? '-';
+            }
+
+            // Get dependencies
+            $dependsOn = '-';
+            if (method_exists($runner, 'dependencies')) {
+                $deps = $runner->dependencies();
+                $dependsOn = !empty($deps) ? implode(', ', $deps) : '-';
+            } elseif (isset($runner->dependsOn) && is_array($runner->dependsOn) && !empty($runner->dependsOn)) {
+                $dependsOn = implode(', ', $runner->dependsOn);
+            }
+
+            // Truncate dependencies if too long
+            if (strlen($dependsOn) > 25) {
+                $dependsOn = substr($dependsOn, 0, 22) . '...';
             }
 
             // Truncate filename if too long
@@ -208,6 +225,7 @@ class RunnerListCommand extends Command
                 $priority,
                 $status,
                 $schedule,
+                $dependsOn,
                 $description,
             ];
         }
@@ -226,7 +244,6 @@ class RunnerListCommand extends Command
      */
     private function loadRunner(string $file)
     {
-        require_once $file;
         return require $file;
     }
 

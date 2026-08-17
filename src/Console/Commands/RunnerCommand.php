@@ -69,7 +69,13 @@ class RunnerCommand extends Command
             $this->info("Running all runners...");
         }
 
-        $summary = $runnerService->run($tag);
+        try {
+            $summary = $runnerService->run($tag);
+        } catch (\Exception $e) {
+            $this->error("Error: {$e->getMessage()}");
+            return;
+        }
+
         $this->displaySummary($summary, $tag, $scheduled);
     }
 
@@ -108,6 +114,10 @@ class RunnerCommand extends Command
             $this->warn("⊘ Skipped {$summary['skipped_count']} runner(s) {$reason}");
         }
 
+        if (($summary['blocked_count'] ?? 0) > 0) {
+            $this->warn("⊘ Blocked {$summary['blocked_count']} runner(s) due to unsatisfied dependencies");
+        }
+
         if (!empty($summary['executed_files'])) {
             $this->newLine();
             $this->line('Executed runners:');
@@ -120,6 +130,14 @@ class RunnerCommand extends Command
             $this->newLine();
             $this->line('Skipped runners:');
             foreach ($summary['skipped_files'] as $file) {
+                $this->line("  ⊘ {$file}");
+            }
+        }
+
+        if (!empty($summary['blocked_files'])) {
+            $this->newLine();
+            $this->line('Blocked runners (unsatisfied dependencies):');
+            foreach ($summary['blocked_files'] as $file) {
                 $this->line("  ⊘ {$file}");
             }
         }

@@ -6,6 +6,7 @@ use Illuminate\Support\ServiceProvider;
 use Obelaw\Runner\Console\Commands\RunnerCommand;
 use Obelaw\Runner\Console\Commands\RunnerListCommand;
 use Obelaw\Runner\Console\Commands\RunnerMakeCommand;
+use Obelaw\Runner\Console\Commands\RunnerTreeCommand;
 use Obelaw\Runner\RunnerPool;
 
 class RunnerServiceProvider extends ServiceProvider
@@ -37,7 +38,8 @@ class RunnerServiceProvider extends ServiceProvider
             $this->commands([
                 RunnerCommand::class,
                 RunnerListCommand::class,
-                RunnerMakeCommand::class
+                RunnerMakeCommand::class,
+                RunnerTreeCommand::class,
             ]);
         }
     }
