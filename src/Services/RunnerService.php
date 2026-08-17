@@ -452,7 +452,6 @@ class RunnerService
     {
         $runnerName = basename($file);
         $runnerLog = null;
-        $obLevel = ob_get_level();
 
         try {
             if (!file_exists($file) || !is_readable($file)) {
@@ -512,9 +511,6 @@ class RunnerService
                 'forced' => $this->force
             ]);
 
-            // Capture output
-            ob_start();
-
             // Execute before hook if available
             if ($runner instanceof Runner || method_exists($runner, 'before')) {
                 Log::debug("Executing before hook: {$runnerName}");
@@ -530,12 +526,9 @@ class RunnerService
                 $runner->after();
             }
 
-            // Get captured output
-            $output = ob_get_clean();
-
             // Mark log as completed
             if ($runnerLog) {
-                $runnerLog->markCompleted($output);
+                $runnerLog->markCompleted($runner instanceof Runner ? $runner->output() : null);
             }
 
             // Track execution
@@ -548,12 +541,6 @@ class RunnerService
             Log::info("Successfully executed runner: {$runnerName}");
 
         } catch (Throwable $e) {
-            // Unwind any output buffers started during this runner's execution,
-            // but never touch buffers that existed before we started.
-            while (ob_get_level() > $obLevel) {
-                ob_end_clean();
-            }
-
             // Mark log as failed
             if ($runnerLog) {
                 $runnerLog->markFailed($e->getMessage() . ' at line ' . $e->getLine());

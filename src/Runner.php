@@ -99,6 +99,16 @@ abstract class Runner
     }
 
     /**
+     * Get the output of the runner after execution.
+     * 
+     * @return mixed
+     */
+    public function output(): mixed
+    {
+        return null;
+    }
+
+    /**
      * Get the runner tag.
      *
      * @return string|null
