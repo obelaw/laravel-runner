@@ -1,5 +1,6 @@
 {
-    "name": "obelaw/runner-laravel",
+    "name": "obelaw/laravel-runner",
+    "description": "A Laravel package that provides a runner system for executing tasks with dependencies and logging.",
     "autoload": {
         "psr-4": {
             "Obelaw\\Runner\\": "src/"
@@ -11,7 +12,9 @@
             "email": "komicho1996@gmail.com"
         }
     ],
-    "require": {},
+    "require": {
+        "laravel/framework": "^11.0|^12.0|^13.0"
+    },
     "extra": {
         "laravel": {
             "providers": [
