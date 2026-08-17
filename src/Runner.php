@@ -39,6 +39,23 @@ abstract class Runner
     protected string $type = self::TYPE_ONCE;
 
     /**
+     * The filename this runner instance was loaded from, injected by
+     * RunnerService::loadRunner(). Used for schedule dedup and dependency
+     * resolution.
+     *
+     * @var string|null
+     */
+    protected ?string $runnerName = null;
+
+    /**
+     * Runner filenames (with or without the .php suffix) that must execute
+     * successfully before this runner is allowed to run.
+     *
+     * @var array
+     */
+    protected array $dependsOn = [];
+
+    /**
      * Execute the runner logic.
      *
      * @return void
@@ -193,6 +210,50 @@ abstract class Runner
     }
 
     /**
+     * Set the runner's filename.
+     *
+     * @param string $name
+     * @return static
+     */
+    public function setRunnerName(string $name): static
+    {
+        $this->runnerName = $name;
+        return $this;
+    }
+
+    /**
+     * Get the runner's filename.
+     *
+     * @return string|null
+     */
+    public function getRunnerName(): ?string
+    {
+        return $this->runnerName;
+    }
+
+    /**
+     * Get the list of runner filenames this runner depends on.
+     *
+     * @return array
+     */
+    public function dependencies(): array
+    {
+        return $this->dependsOn;
+    }
+
+    /**
+     * Set the list of runner filenames this runner depends on.
+     *
+     * @param array $dependencies
+     * @return static
+     */
+    public function setDependencies(array $dependencies): static
+    {
+        $this->dependsOn = $dependencies;
+        return $this;
+    }
+
+    /**
      * Get runner information as an array.
      *
      * @return array
@@ -206,6 +267,7 @@ abstract class Runner
             'description' => $this->description,
             'type' => $this->type,
             'schedule' => $this->getSchedule(),
+            'depends_on' => $this->dependsOn,
         ];
     }
 }

@@ -20,6 +20,36 @@ class RunnerService
     private bool $force = false;
     private bool $scheduledOnly = false;
 
+    /**
+     * Cache of loaded runner instances keyed by basename($file), so each
+     * runner file is required exactly once per RunnerService lifecycle.
+     *
+     * @var array
+     */
+    private array $loadedRunners = [];
+
+    /**
+     * Names of runners that failed during the current run.
+     *
+     * @var array
+     */
+    private array $failedNames = [];
+
+    /**
+     * Names of runners blocked this run due to unsatisfied dependencies.
+     *
+     * @var array
+     */
+    private array $unsatisfiedNames = [];
+
+    /**
+     * Names of runners skipped this run because they were already executed
+     * (TYPE_ONCE). Used to satisfy dependents of those runners.
+     *
+     * @var array
+     */
+    private array $skippedAsExecutedNames = [];
+
     public function __construct(array $runnerPools)
     {
         $this->validateRunnerPools($runnerPools);
@@ -89,8 +119,8 @@ class RunnerService
             }
         }
 
-        // Sort runners by filename (timestamp-based names will be sorted chronologically)
-        $runnersFiles = $this->sortRunnersByName($runnersFiles);
+        // Sort runners by dependency order (priority, then filename, breaks ties)
+        $runnersFiles = $this->sortByDependencies($runnersFiles);
 
         Log::info('Starting runner execution', [
             'total_files' => count($runnersFiles),
@@ -197,8 +227,12 @@ class RunnerService
             return $runner->getSchedule() !== null;
         }
 
-        if (property_exists($runner, 'schedule')) {
-            return $runner->schedule !== null;
+        if (method_exists($runner, 'getSchedule')) {
+            try {
+                return $runner->getSchedule() !== null;
+            } catch (Throwable $e) {
+                return false;
+            }
         }
 
         return false;
@@ -302,6 +336,7 @@ class RunnerService
     /**
      * Sort runners by filename across all pools.
      *
+     * @deprecated Use sortByDependencies() instead, which also honors priority.
      * @param array $runnersFiles
      * @return array
      */
@@ -320,6 +355,94 @@ class RunnerService
     }
 
     /**
+     * Sort runners based on their declared dependencies using Kahn's
+     * topological sort algorithm. Within each set of runners that become
+     * ready at the same time, ties are broken by priority (ascending) then
+     * filename (ascending).
+     *
+     * @param array $runnersFiles
+     * @return array
+     * @throws Exception If a self-dependency, missing dependency, or cycle is found.
+     */
+    private function sortByDependencies(array $runnersFiles): array
+    {
+        $fileByName = [];
+        $priorityByName = [];
+        $dependenciesByName = [];
+
+        foreach ($runnersFiles as $file) {
+            $name = basename($file);
+            $fileByName[$name] = $file;
+
+            try {
+                $runner = $this->loadRunner($file);
+            } catch (Throwable $e) {
+                Log::warning("Failed to load runner while building dependency graph: {$name}", [
+                    'error' => $e->getMessage()
+                ]);
+                unset($fileByName[$name]);
+                continue;
+            }
+
+            $priorityByName[$name] = $this->getRunnerPriority($runner);
+            $dependenciesByName[$name] = $this->normalizeDependencies($runner);
+        }
+
+        $nodes = array_keys($fileByName);
+        $inDegree = array_fill_keys($nodes, 0);
+        $dependents = array_fill_keys($nodes, []);
+
+        foreach ($dependenciesByName as $name => $deps) {
+            foreach ($deps as $dep) {
+                if ($dep === $name) {
+                    throw new Exception("Runner '{$name}' cannot depend on itself.");
+                }
+
+                if (!isset($fileByName[$dep])) {
+                    if ($this->trackExecutions && RunnerModel::hasBeenExecuted($dep)) {
+                        Log::debug("Dependency '{$dep}' for runner '{$name}' was already executed historically. Skipping edge.");
+                        continue;
+                    }
+
+                    throw new Exception("Runner '{$name}' depends on '{$dep}', which was not found among the loaded runners and has not been previously executed.");
+                }
+
+                $inDegree[$name]++;
+                $dependents[$dep][] = $name;
+            }
+        }
+
+        $ready = array_values(array_filter($nodes, fn($name) => $inDegree[$name] === 0));
+        $sorted = [];
+
+        while (!empty($ready)) {
+            usort($ready, function ($a, $b) use ($priorityByName) {
+                $priorityCompare = $priorityByName[$a] <=> $priorityByName[$b];
+                return $priorityCompare !== 0 ? $priorityCompare : strcmp($a, $b);
+            });
+
+            $current = array_shift($ready);
+            $sorted[] = $current;
+
+            foreach ($dependents[$current] as $dependent) {
+                $inDegree[$dependent]--;
+                if ($inDegree[$dependent] === 0) {
+                    $ready[] = $dependent;
+                }
+            }
+        }
+
+        if (count($sorted) !== count($nodes)) {
+            $remaining = array_values(array_filter($nodes, fn($name) => $inDegree[$name] > 0));
+            throw new Exception('Circular dependency detected among runners: ' . implode(', ', $remaining));
+        }
+
+        Log::debug('Sorted runners by dependencies', ['order' => $sorted]);
+
+        return array_map(fn($name) => $fileByName[$name], $sorted);
+    }
+
+    /**
      * Execute a single runner file.
      *
      * @param string $file
@@ -329,6 +452,7 @@ class RunnerService
     {
         $runnerName = basename($file);
         $runnerLog = null;
+        $obLevel = ob_get_level();
 
         try {
             if (!file_exists($file) || !is_readable($file)) {
@@ -337,8 +461,9 @@ class RunnerService
 
             $runner = $this->loadRunner($file);
 
-            if (!$this->isValidRunner($runner)) {
-                Log::warning("Invalid runner object in file: {$file}");
+            // Check dependencies before any other consideration, so a blocked
+            // runner never partially executes.
+            if (!$this->dependenciesSatisfied($runner, $runnerName)) {
                 return;
             }
 
@@ -423,8 +548,9 @@ class RunnerService
             Log::info("Successfully executed runner: {$runnerName}");
 
         } catch (Throwable $e) {
-            // Clean output buffer if active
-            if (ob_get_level() > 0) {
+            // Unwind any output buffers started during this runner's execution,
+            // but never touch buffers that existed before we started.
+            while (ob_get_level() > $obLevel) {
                 ob_end_clean();
             }
 
@@ -433,6 +559,9 @@ class RunnerService
                 $runnerLog->markFailed($e->getMessage() . ' at line ' . $e->getLine());
             }
 
+            // Track failure so dependents are cascade-blocked.
+            $this->failedNames[] = $runnerName;
+
             $error = [
                 'file' => $file,
                 'error' => $e->getMessage(),
@@ -440,7 +569,7 @@ class RunnerService
             ];
 
             $this->errors[] = $error;
-            
+
             Log::error("Failed to execute runner: {$runnerName}", $error);
         }
     }
@@ -462,6 +591,7 @@ class RunnerService
         if ($runner instanceof Runner && $runner->isTypeOnce()) {
             Log::debug("Skipping TYPE_ONCE runner that was already executed: {$runnerName}");
             $this->skippedFiles[] = $runnerName;
+            $this->skippedAsExecutedNames[] = $runnerName;
             return true;
         }
 
@@ -471,21 +601,121 @@ class RunnerService
             return false;
         }
 
-        // For non-Runner objects, check if they have a type property
-        if (property_exists($runner, 'type')) {
-            if ($runner->getType() === Runner::TYPE_ONCE) {
+        // For non-Runner objects, duck-type via the public getType() method only.
+        if (method_exists($runner, 'getType')) {
+            try {
+                $type = $runner->getType();
+            } catch (Throwable $e) {
+                Log::warning("Failed to determine runner type: {$runnerName}", ['error' => $e->getMessage()]);
+                $type = Runner::TYPE_ONCE;
+            }
+
+            if ($type === Runner::TYPE_ONCE) {
                 Log::debug("Skipping TYPE_ONCE runner that was already executed: {$runnerName}");
                 $this->skippedFiles[] = $runnerName;
+                $this->skippedAsExecutedNames[] = $runnerName;
                 return true;
             }
         } else {
-            // Default behavior: skip if already executed
+            // Default behavior: skip if already executed and no type information available
             Log::debug("Skipping already executed runner (default TYPE_ONCE): {$runnerName}");
             $this->skippedFiles[] = $runnerName;
+            $this->skippedAsExecutedNames[] = $runnerName;
             return true;
         }
 
         return false;
+    }
+
+    /**
+     * Determine whether all of a runner's dependencies have been satisfied
+     * for this run. A dependency blocks execution if it failed or was
+     * itself cascade-blocked during this run. A dependency is satisfied if
+     * it executed this run, was skipped this run because it was already
+     * executed, or was historically executed according to execution tracking.
+     *
+     * @param object $runner
+     * @param string $name
+     * @return bool
+     */
+    private function dependenciesSatisfied(object $runner, string $name): bool
+    {
+        $executedNames = array_map('basename', $this->executedFiles);
+
+        foreach ($this->normalizeDependencies($runner) as $dep) {
+            $isBlocked = in_array($dep, $this->failedNames, true) || in_array($dep, $this->unsatisfiedNames, true);
+
+            $isSatisfied = !$isBlocked && (
+                in_array($dep, $executedNames, true)
+                || in_array($dep, $this->skippedAsExecutedNames, true)
+                || ($this->trackExecutions && RunnerModel::hasBeenExecuted($dep))
+            );
+
+            if (!$isSatisfied) {
+                $this->unsatisfiedNames[] = $name;
+                $this->skippedFiles[] = $name;
+
+                Log::warning("Skipping runner due to unsatisfied dependency", [
+                    'runner' => $name,
+                    'dependency' => $dep,
+                    'reason' => $isBlocked ? 'dependency failed or was blocked' : 'dependency has not run',
+                ]);
+
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Normalize a runner's declared dependencies into filenames with a
+     * trailing .php extension, accepted with or without the suffix.
+     *
+     * @param object $runner
+     * @return array
+     */
+    private function normalizeDependencies(object $runner): array
+    {
+        $dependencies = [];
+
+        if (method_exists($runner, 'dependencies')) {
+            try {
+                $dependencies = (array) $runner->dependencies();
+            } catch (Throwable $e) {
+                $dependencies = [];
+            }
+        } elseif (isset($runner->dependsOn) && is_array($runner->dependsOn)) {
+            $dependencies = $runner->dependsOn;
+        }
+
+        return array_values(array_unique(array_map(
+            fn($dep) => str_replace('.php', '', (string) $dep) . '.php',
+            $dependencies
+        )));
+    }
+
+    /**
+     * Resolve a runner's priority for dependency tiebreaking.
+     *
+     * @param object $runner
+     * @return int
+     */
+    private function getRunnerPriority(object $runner): int
+    {
+        if (method_exists($runner, 'getPriority')) {
+            try {
+                return (int) $runner->getPriority();
+            } catch (Throwable $e) {
+                return 0;
+            }
+        }
+
+        if (isset($runner->priority) && is_numeric($runner->priority)) {
+            return (int) $runner->priority;
+        }
+
+        return 0;
     }
 
     /**
@@ -524,22 +754,40 @@ class RunnerService
     }
 
     /**
-     * Load runner instance from file.
+     * Load a runner instance from file, caching the instance by
+     * basename($file) so each runner file is required exactly once and the
+     * same instance is reused across schedule checks, dependency
+     * resolution, and execution.
      *
      * @param string $file
-     * @return mixed
+     * @return object
      * @throws Exception
      */
-    private function loadRunner(string $file)
+    private function loadRunner(string $file): object
     {
-        try {
-            // First require_once to avoid redeclaration issues
-            require_once $file;
-            // Then require to get the returned object
-            return require $file;
-        } catch (Throwable $e) {
-            throw new Exception("Failed to load runner file: " . basename($file) . ". Error: " . $e->getMessage());
+        $key = basename($file);
+
+        if (isset($this->loadedRunners[$key])) {
+            return $this->loadedRunners[$key];
         }
+
+        try {
+            $runner = require $file;
+        } catch (Throwable $e) {
+            throw new Exception("Failed to load runner file: {$key}. Error: " . $e->getMessage());
+        }
+
+        if (!$this->isValidRunner($runner)) {
+            throw new Exception("Invalid runner object in file: {$key}");
+        }
+
+        if (method_exists($runner, 'setRunnerName')) {
+            $runner->setRunnerName($key);
+        }
+
+        $this->loadedRunners[$key] = $runner;
+
+        return $runner;
     }
 
     /**
@@ -578,6 +826,10 @@ class RunnerService
         $this->executedFiles = [];
         $this->skippedFiles = [];
         $this->errors = [];
+        $this->loadedRunners = [];
+        $this->failedNames = [];
+        $this->unsatisfiedNames = [];
+        $this->skippedAsExecutedNames = [];
     }
 
     /**
@@ -591,8 +843,10 @@ class RunnerService
             'executed_count' => count($this->executedFiles),
             'skipped_count' => count($this->skippedFiles),
             'error_count' => count($this->errors),
+            'blocked_count' => count($this->unsatisfiedNames),
             'executed_files' => array_map('basename', $this->executedFiles),
             'skipped_files' => array_map('basename', $this->skippedFiles),
+            'blocked_files' => array_map('basename', $this->unsatisfiedNames),
             'errors' => $this->errors,
             'success' => empty($this->errors)
         ];

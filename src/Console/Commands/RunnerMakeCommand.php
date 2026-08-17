@@ -114,6 +114,26 @@ class RunnerMakeCommand extends Command
             );
         }
 
+        // Prompt for dependencies
+        $hasDependencies = confirm(
+            label: 'Does this runner depend on other runners?',
+            default: false
+        );
+
+        $dependencies = [];
+        if ($hasDependencies) {
+            $dependenciesInput = text(
+                label: 'Enter dependency runner names (comma-separated):',
+                placeholder: 'e.g., 2024_11_01_120000_create_categories, 2024_11_01_130000_create_products',
+                required: false,
+                hint: 'Filenames with or without the .php extension'
+            );
+
+            if ($dependenciesInput) {
+                $dependencies = array_values(array_filter(array_map('trim', explode(',', $dependenciesInput))));
+            }
+        }
+
         // Get the path where runner will be created
         $path = $this->selectRunnerPath();
 
@@ -139,7 +159,7 @@ class RunnerMakeCommand extends Command
         }
 
         // Generate the runner content
-        $content = $this->generateRunnerContent($name, $tag, $description, $priority, $type, $schedule);
+        $content = $this->generateRunnerContent($name, $tag, $description, $priority, $type, $schedule, $dependencies);
 
         // Write the file
         file_put_contents($filepath, $content);
@@ -157,6 +177,9 @@ class RunnerMakeCommand extends Command
         $this->components->twoColumnDetail('Priority', (string) $priority);
         if ($schedule) {
             $this->components->twoColumnDetail('Schedule', $schedule);
+        }
+        if (!empty($dependencies)) {
+            $this->components->twoColumnDetail('Dependencies', implode(', ', $dependencies));
         }
 
         return Command::SUCCESS;
@@ -217,6 +240,7 @@ class RunnerMakeCommand extends Command
      * @param int $priority
      * @param string $type
      * @param string|null $schedule
+     * @param array $dependencies
      * @return string
      */
     protected function generateRunnerContent(
@@ -225,12 +249,14 @@ class RunnerMakeCommand extends Command
         ?string $description,
         int $priority,
         string $type,
-        ?string $schedule
+        ?string $schedule,
+        array $dependencies = []
     ): string {
         $tagLine = $tag ? "    public ?string \$tag = '{$tag}';" : "    public ?string \$tag = null;";
         $descLine = $description ? "    public ?string \$description = '{$description}';" : "    public ?string \$description = null;";
         $typeLine = "    protected string \$type = Runner::TYPE_" . strtoupper($type) . ";";
         $scheduleLine = $schedule ? "    protected ?string \$schedule = '{$schedule}';" : "    protected ?string \$schedule = null;";
+        $dependsOnLine = $this->buildDependsOnLine($dependencies);
 
         return <<<PHP
 <?php
@@ -264,6 +290,11 @@ return new class extends Runner
      * @var string|null
      */
 {$scheduleLine}
+
+    /**
+     * Runner filenames that must execute successfully before this runner runs.
+     */
+{$dependsOnLine}
 
     /**
      * Execute the runner logic.
@@ -309,5 +340,25 @@ return new class extends Runner
 };
 
 PHP;
+    }
+
+    /**
+     * Build the $dependsOn property declaration for the runner stub.
+     *
+     * @param array $dependencies
+     * @return string
+     */
+    protected function buildDependsOnLine(array $dependencies): string
+    {
+        if (empty($dependencies)) {
+            return "    protected array \$dependsOn = [];";
+        }
+
+        $normalized = array_map(
+            fn($dep) => "'" . addslashes(str_replace('.php', '', $dep) . '.php') . "'",
+            $dependencies
+        );
+
+        return "    protected array \$dependsOn = [" . implode(', ', $normalized) . "];";
     }
 }

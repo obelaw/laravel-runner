@@ -141,27 +141,14 @@ trait Schedulable
     protected function getLastRunTime(): ?Carbon
     {
         $runnerName = $this->getRunnerName();
+
+        if (!$runnerName) {
+            return null;
+        }
+
         $runner = RunnerModel::where('name', $runnerName)->first();
 
         return $runner?->executed_at;
-    }
-
-    /**
-     * Get the runner name (filename).
-     *
-     * @return string
-     */
-    protected function getRunnerName(): string
-    {
-        // Get the filename from backtrace
-        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
-        foreach ($trace as $item) {
-            if (isset($item['file']) && str_ends_with($item['file'], '.php')) {
-                return basename($item['file']);
-            }
-        }
-
-        return 'unknown_runner.php';
     }
 
     /**
