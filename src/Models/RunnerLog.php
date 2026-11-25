@@ -97,14 +97,20 @@ class RunnerLog extends Model
     /**
      * Mark log as completed.
      */
-    public function markCompleted(?string $output = null): bool
+    public function markCompleted(mixed $output = null): bool
     {
         $startTime = $this->started_at?->timestamp ?? microtime(true);
-        $executionTime = (int)((microtime(true) - $startTime) * 1000);
+        $executionTime = max(0, (int) ((microtime(true) - $startTime) * 1000));
+
+        $serializedOutput = match (true) {
+            $output === null => null,
+            is_string($output) => $output,
+            default => json_encode($output, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: (string) $output,
+        };
 
         return $this->update([
             'status' => 'completed',
-            'output' => $output,
+            'output' => $serializedOutput,
             'completed_at' => now(),
             'execution_time' => $executionTime,
         ]);

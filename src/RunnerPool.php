@@ -1,33 +1,43 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Obelaw\Runner;
 
 class RunnerPool
 {
     /**
-     * These paths for all pools of runners.
+     * Registered directory paths containing runner files.
      *
-     * @var array
+     * @var list<string>
      */
     protected static array $paths = [];
 
     /**
-     * Add a path to the paths array.
-     *
-     * @param string $path
+     * Add a path to the runner pools (deduplicated).
      */
     public static function addPath(string $path): void
     {
-        array_push(self::$paths, $path);
+        if (! in_array($path, self::$paths, true)) {
+            self::$paths[] = $path;
+        }
     }
 
     /**
-     * Get the paths array.
+     * Get all registered runner pool paths.
      *
-     * @return array
+     * @return list<string>
      */
     public static function getPaths(): array
     {
         return self::$paths;
+    }
+
+    /**
+     * Clear all registered runner pool paths (useful in tests and isolated runtimes).
+     */
+    public static function flush(): void
+    {
+        self::$paths = [];
     }
 }

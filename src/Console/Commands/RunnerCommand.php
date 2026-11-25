@@ -24,15 +24,15 @@ class RunnerCommand extends Command
      */
     protected $description = 'Execute runners from configured pools';
 
-    public function handle(): void
+    public function handle(): int
     {
         $name = $this->argument('name');
         $tag = $this->option('tag');
-        $force = $this->option('force');
-        $scheduled = $this->option('scheduled');
-        
+        $force = (bool) $this->option('force');
+        $scheduled = (bool) $this->option('scheduled');
+
         $runnerService = new RunnerService(RunnerPool::getPaths());
-        
+
         if ($force) {
             $runnerService->force(true);
             $this->warn("Force mode: Re-executing all runners including TYPE_ONCE");
@@ -46,16 +46,17 @@ class RunnerCommand extends Command
         if ($name) {
             $message = $scheduled ? "Running specific scheduled runner: {$name}" : "Running specific runner: {$name}";
             $this->info($message);
-            
+
             try {
-                $summary = $runnerService->runByName($name);
+                $summary = $runnerService->runByName((string) $name);
                 $this->displaySummary($summary, $tag, $scheduled);
+
+                return $summary['success'] ? Command::SUCCESS : Command::FAILURE;
             } catch (\Exception $e) {
                 $this->error("Error: {$e->getMessage()}");
-                return;
+
+                return Command::FAILURE;
             }
-            
-            return;
         }
 
         // Run all runners or by tag
@@ -73,10 +74,13 @@ class RunnerCommand extends Command
             $summary = $runnerService->run($tag);
         } catch (\Exception $e) {
             $this->error("Error: {$e->getMessage()}");
-            return;
+
+            return Command::FAILURE;
         }
 
         $this->displaySummary($summary, $tag, $scheduled);
+
+        return $summary['success'] ? Command::SUCCESS : Command::FAILURE;
     }
 
     /**

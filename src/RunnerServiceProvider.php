@@ -35,6 +35,19 @@ class RunnerServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
 
+            $this->publishes([
+                __DIR__ . '/../resources/boost/skills' => base_path('.ai/skills'),
+                __DIR__ . '/../resources/boost/guidelines' => base_path('.ai/guidelines/obelaw-runner'),
+            ], 'runner-boost');
+
+            $this->publishes([
+                __DIR__ . '/../resources/boost/skills' => base_path('.ai/skills'),
+            ], 'runner-boost-skills');
+
+            $this->publishes([
+                __DIR__ . '/../resources/boost/guidelines' => base_path('.ai/guidelines/obelaw-runner'),
+            ], 'runner-boost-guidelines');
+
             $this->commands([
                 RunnerCommand::class,
                 RunnerListCommand::class,
