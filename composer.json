@@ -1,19 +1,33 @@
 {
     "name": "obelaw/laravel-runner",
-    "description": "A Laravel package that provides a runner system for executing tasks with dependencies and logging.",
+    "description": "A Laravel package that provides a runner system for executing tasks with dependencies, scheduling, and logging.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Obelaw Team",
+            "email": "consulting@obelaw.com"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "dragonmantank/cron-expression": "^3.0",
+        "laravel/framework": "^11.0|^12.0|^13.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^9.0|^10.0|^11.0",
+        "pestphp/pest": "^3.0|^4.0",
+        "pestphp/pest-plugin-laravel": "^3.0|^4.0"
+    },
     "autoload": {
         "psr-4": {
             "Obelaw\\Runner\\": "src/"
         }
     },
-    "authors": [
-        {
-            "name": "Karim Mohamed",
-            "email": "komicho1996@gmail.com"
+    "autoload-dev": {
+        "psr-4": {
+            "Obelaw\\Runner\\Tests\\": "tests/"
         }
-    ],
-    "require": {
-        "laravel/framework": "^11.0|^12.0|^13.0"
     },
     "extra": {
         "laravel": {
@@ -21,5 +35,16 @@
                 "Obelaw\\Runner\\RunnerServiceProvider"
             ]
         }
-    }
+    },
+    "scripts": {
+        "test": "vendor/bin/pest"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
 }

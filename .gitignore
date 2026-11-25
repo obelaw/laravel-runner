@@ -1,2 +1,10 @@
 /vendor/
 /composer.lock
+/.phpunit.result.cache
+/.phpunit.cache/
+/coverage/
+/.agents/
+/.ai/
+/.claude/
+.DS_Store
+Thumbs.db
